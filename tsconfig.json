@@ -5,9 +5,13 @@
 		"outDir": "./dist",
 		"lib": [
 			"ES2020",
-            "dom"
+			"dom"
 		],
-        "jsx": "react",
+		"jsx": "react",
 		"sourceMap": true,
-	}
+		"strict": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true
+	},
+	"exclude": ["node_modules", "dist", "src/test"]
 }

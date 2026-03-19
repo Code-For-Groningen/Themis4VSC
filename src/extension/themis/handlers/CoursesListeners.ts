@@ -1,43 +1,27 @@
 import { ExtensionContext, Webview } from "vscode";
-import { Course, CoursesRefreshRequest, CoursesRefreshResponse, CoursesRequest, CoursesResponse, Message } from "../../../protocol/protocol";
+import { Message, NavigationRequest, NavigationResponse } from "../../../protocol/protocol";
 import ThemisClient from "../ThemisClient";
 
-export function handleCourseRequest(context: ExtensionContext, client: ThemisClient, webview: Webview) {
-    webview.onDidReceiveMessage((message: Message) => {
-        if (message.type !== "courses-request") {
-            return;
-        }
+export function handleNavigationRequest(context: ExtensionContext, client: ThemisClient, webview: Webview) {
+    webview.onDidReceiveMessage(async (message: Message) => {
+        if (message.type !== "navigation-request") { return; }
+        const req = message as NavigationRequest;
 
-        let parsedMessage = message as CoursesRequest;
-
-        client.indexCourses().then(course => {
-
-            let responseMessage: CoursesResponse = {
-                type: "courses-response",
-                id: parsedMessage.id,
-                course: course,
+        try {
+            const children = await client.getNavigation(req.path);
+            const resp: NavigationResponse = {
+                type: "navigation-response",
+                id: req.id,
+                children,
             };
-
-            webview.postMessage(responseMessage);
-        });
-    }, undefined, context.subscriptions);
-}
-
-export function handleCourseRefreshRequest(context: ExtensionContext, client: ThemisClient, webview: Webview) {
-    webview.onDidReceiveMessage((message: Message) => {
-        if (message.type !== "courses-refresh-request") {
-            return;
+            webview.postMessage(resp);
+        } catch (err: any) {
+            const resp: NavigationResponse = {
+                type: "navigation-response",
+                id: req.id,
+                children: [],
+            };
+            webview.postMessage(resp);
         }
-
-        let parsedMessage = message as CoursesRefreshRequest;
-
-        client.wipeCourseCache();
-
-        let responseMessage: CoursesRefreshResponse = {
-            type: "courses-refresh-response",
-            id: parsedMessage.id,
-        };
-
-        webview.postMessage(responseMessage);
     }, undefined, context.subscriptions);
 }

@@ -1,48 +1,73 @@
 import * as React from "react";
 import { useState, useEffect } from "react";
-import { LoggedInUserInformation } from "../protocol/protocol";
-import VSContext from "./context/VSContext";
+import { FileInfo, LoggedInUserInformation, CourseNode } from "../protocol/protocol";
 import useThemisClient from "./hooks/useThemisClient";
-import useVSApi from "./hooks/useVSApi";
 import LoginThemis from "./pages/LoginThemis";
 import SubmittingView from "./pages/SubmittingView";
+import ExerciseView from "./pages/ExerciseView";
+import ResultsView from "./pages/ResultsView";
 
-function formatLoggedInUser(user: LoggedInUserInformation) {
-    if (!user)
-        return "Not logged in";
-    return `${user.name} (${user.studentId})`;
-}
+type Page =
+    | { kind: "courses" }
+    | { kind: "exercise"; node: CourseNode }
+    | { kind: "results"; path: string };
 
 function ThemisSidebar() {
-    let client = useThemisClient();
-    let [isLoggedIn, setIsLoggedIn] = useState<boolean>(undefined);
-    let [loggedAs, setLoggedAs] = useState<LoggedInUserInformation>(undefined);
+    const client = useThemisClient();
+    const [isLoggedIn, setIsLoggedIn] = useState<boolean | undefined>(undefined);
+    const [loggedAs, setLoggedAs] = useState<LoggedInUserInformation | null>(null);
+    const [page, setPage] = useState<Page>({ kind: "courses" });
 
     useEffect(() => {
-        client.isLoggedIn()
-            .then(loggedIn => setIsLoggedIn(loggedIn))
-            .then(() => {
-                setLoggedAs(client.loggedInUser);
-            });
-    });
+        client.isLoggedIn().then(({ loggedIn, user }) => {
+            setIsLoggedIn(loggedIn);
+            if (user) { setLoggedAs(user); }
+        });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    if (isLoggedIn === undefined) {
+        return <div className="loading">Loading...</div>;
+    }
+
+    if (!isLoggedIn) {
+        return <LoginThemis onLoggedIn={(user) => {
+            setLoggedAs(user);
+            setIsLoggedIn(true);
+        }} />;
+    }
 
     return <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h1>Themis</h1>
-            <button onClick={async () => {
-                await client.logout();
-                setIsLoggedIn(false);
-            }}>
-                Logout
-            </button>
+        <div className="sidebar-header">
+            <span className="sidebar-header-title">Themis</span>
+            <div className="sidebar-header-actions">
+                {page.kind !== "courses" && (
+                    <button className="btn btn-secondary btn-sm" onClick={() => setPage({ kind: "courses" })}>Back</button>
+                )}
+                <button className="btn btn-secondary btn-sm" onClick={async () => {
+                    await client.logout();
+                    setIsLoggedIn(false);
+                    setLoggedAs(null);
+                    setPage({ kind: "courses" });
+                }}>Logout</button>
+            </div>
         </div>
-        <div>
-            Logged in as: {formatLoggedInUser(loggedAs)}
+        <div className="sidebar-user">
+            {loggedAs ? `${loggedAs.name} (${loggedAs.studentId})` : ""}
         </div>
-        {isLoggedIn === undefined ? <p>Loading...</p> :
-            isLoggedIn ? <SubmittingView /> :
-                <LoginThemis setLoggedIn={(logged) => setIsLoggedIn(logged)} />
-        }
+
+        {page.kind === "courses" && (
+            <SubmittingView onSelectAssignment={(node) => setPage({ kind: "exercise", node })} />
+        )}
+        {page.kind === "exercise" && (
+            <ExerciseView
+                node={page.node}
+                onResults={(path) => setPage({ kind: "results", path })}
+                onBack={() => setPage({ kind: "courses" })}
+            />
+        )}
+        {page.kind === "results" && (
+            <ResultsView path={page.path} />
+        )}
     </div>;
 }
 

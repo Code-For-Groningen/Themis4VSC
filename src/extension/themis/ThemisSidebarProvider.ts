@@ -1,9 +1,11 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { Uri, WebviewView, WebviewViewProvider } from "vscode";
-import { handleCourseRefreshRequest, handleCourseRequest } from './handlers/CoursesListeners';
-import { handleDebugging } from './handlers/DebuggingListeners';
+import { handleAssignmentRequest } from './handlers/AssignmentListeners';
+import { handleNavigationRequest } from './handlers/CoursesListeners';
 import { handleAttemptLogin, handleCheckLogin, handleLogout } from './handlers/LoginListeners';
+import { handleResultsRequest } from './handlers/ResultsListeners';
+import { handlePickFiles, handleSubmit } from './handlers/SubmissionListeners';
 import ThemisClient from "./ThemisClient";
 
 class ThemisSidebarProvider implements WebviewViewProvider {
@@ -33,7 +35,11 @@ class ThemisSidebarProvider implements WebviewViewProvider {
         let reactScript = vscode.Uri.file(vscode.Uri.joinPath(this._extensionUri, 'dist', 'react.js').fsPath);
         let reactUrl = webviewView.webview.asWebviewUri(reactScript);
 
+        let cssFile = vscode.Uri.file(vscode.Uri.joinPath(this._extensionUri, 'src', 'public', 'sidebar.css').fsPath);
+        let cssUrl = webviewView.webview.asWebviewUri(cssFile);
+
         html = html.replace("%react%", String(reactUrl));
+        html = html.replace("%css%", String(cssUrl));
 
         this.registerListeners();
 
@@ -41,14 +47,27 @@ class ThemisSidebarProvider implements WebviewViewProvider {
     }
 
     private registerListeners() {
-        handleCheckLogin(this._context, this._client, this._view!.webview);
-        handleAttemptLogin(this._context, this._client, this._view!.webview);
-        handleLogout(this._context, this._client, this._view!.webview);
+        const ctx = this._context;
+        const client = this._client;
+        const webview = this._view!.webview;
 
-        handleCourseRequest(this._context, this._client, this._view!.webview);
-        handleCourseRefreshRequest(this._context, this._client, this._view!.webview);
+        // Auth
+        handleCheckLogin(ctx, client, webview);
+        handleAttemptLogin(ctx, client, webview);
+        handleLogout(ctx, client, webview);
 
-        handleDebugging(this._context, this._client, this._view!.webview);
+        // Navigation
+        handleNavigationRequest(ctx, client, webview);
+
+        // Assignment details
+        handleAssignmentRequest(ctx, client, webview);
+
+        // Submission
+        handlePickFiles(ctx, client, webview);
+        handleSubmit(ctx, client, webview);
+
+        // Results
+        handleResultsRequest(ctx, client, webview);
     }
 }
 

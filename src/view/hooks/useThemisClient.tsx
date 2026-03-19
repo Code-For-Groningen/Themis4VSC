@@ -1,146 +1,131 @@
-import { CheckLoginRequest, CheckLoginResponse, Course, CoursesRefreshRequest, CoursesRefreshResponse, CoursesRequest, CoursesResponse, LoggedInUserInformation, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse, Message } from "../../protocol/protocol";
+import {
+    Assignment,
+    AssignmentRequest,
+    AssignmentResponse,
+    CheckLoginRequest,
+    CheckLoginResponse,
+    CourseNode,
+    FileInfo,
+    LoggedInUserInformation,
+    LoginRequest,
+    LoginResponse,
+    LogoutRequest,
+    LogoutResponse,
+    Message,
+    NavigationRequest,
+    NavigationResponse,
+    PickFilesRequest,
+    PickFilesResponse,
+    ResultsRequest,
+    ResultsResponse,
+    SubmissionResult,
+    SubmitRequest,
+    SubmitResponse,
+} from "../../protocol/protocol";
 import useVSApi from "./useVSApi";
 
+function makeId(): string {
+    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
+
 function useThemisClient() {
-    let vsApi = useVSApi();
+    const vsApi = useVSApi();
+
+    function request<TReq extends Message, TResp extends Message>(
+        requestMsg: TReq,
+        responseType: string,
+        id: string,
+    ): Promise<TResp> {
+        return new Promise((resolve) => {
+            vsApi.onceMessage((message: Message) => {
+                if (message.type !== responseType) { return false; }
+                if ((message as any).id !== id) { return false; }
+                resolve(message as TResp);
+                return true;
+            });
+            vsApi.postMessage(requestMsg);
+        });
+    }
 
     return {
-        loggedInUser: undefined as LoggedInUserInformation | undefined,
-
-        async isLoggedIn() {
-            let id = Math.random().toString() + Math.random().toString();
-            return new Promise<boolean>((resolve, reject) => {
-                vsApi.onceMessage((message: Message) => {
-                    if (message.type !== "check-login-response") {
-                        return false;
-                    }
-                    let response = message as CheckLoginResponse;
-                    if (response.id !== id)
-                        return false;
-
-                    let success = response.loggedIn;
-                    if (success)
-                        this.loggedInUser = response.user;
-
-                    resolve(success);
-                    return true;
-                });
-
-                let messageToPost: CheckLoginRequest = {
-                    type: "check-login-request",
-                    id: id,
-                };
-
-                vsApi.postMessage(messageToPost);
-            });
+        async isLoggedIn(): Promise<{ loggedIn: boolean; user: LoggedInUserInformation | null }> {
+            const id = makeId();
+            const resp = await request<CheckLoginRequest, CheckLoginResponse>(
+                { type: "check-login-request", id },
+                "check-login-response",
+                id,
+            );
+            return { loggedIn: resp.loggedIn, user: resp.user };
         },
 
-        async attemptLogin(username: string, password: string) {
-            let id = Math.random().toString() + Math.random().toString();
-
-            // LoginRequest -> LoginResponse
-            return new Promise<boolean>((resolve, reject) => {
-                vsApi.onceMessage((message: Message) => {
-                    if (message.type !== "login-response") {
-                        return false;
-                    }
-                    let response = message as LoginResponse;
-                    if (response.id !== id)
-                        return false;
-
-                    let success = response.success;
-                    if (success)
-                        this.loggedInUser = response.user;
-
-                    resolve(success);
-                    return true;
-                });
-
-                let messageToPost: LoginRequest = {
-                    type: "login-request",
-                    id: id,
-                    username: username,
-                    password: password,
-                };
-
-                vsApi.postMessage(messageToPost);
-            });
+        async attemptLogin(username: string, password: string, totp: string): Promise<{ success: boolean; user: LoggedInUserInformation | null }> {
+            const id = makeId();
+            const resp = await request<LoginRequest, LoginResponse>(
+                { type: "login-request", id, username, password, totp },
+                "login-response",
+                id,
+            );
+            return { success: resp.success, user: resp.user };
         },
 
-        async getRootCourse() {
-            let id = Math.random().toString() + Math.random().toString();
-
-            return new Promise<Course>((resolve, reject) => {
-                vsApi.onceMessage((message: Message) => {
-                    if (message.type !== "courses-response") {
-                        return false;
-                    }
-                    let response = message as CoursesResponse;
-                    if (response.id !== id)
-                        return false;
-
-                    resolve(response.course);
-                    return true;
-                });
-
-                let messageToPost: CoursesRequest = {
-                    type: "courses-request",
-                    id: id,
-                };
-
-                vsApi.postMessage(messageToPost);
-            });
+        async logout(): Promise<void> {
+            const id = makeId();
+            await request<LogoutRequest, LogoutResponse>(
+                { type: "logout-request", id },
+                "logout-response",
+                id,
+            );
         },
 
-        async refreshCourses() {
-            let id = Math.random().toString() + Math.random().toString();
-
-            return new Promise<Boolean>((resolve, reject) => {
-                vsApi.onceMessage((message: Message) => {
-                    if (message.type !== "courses-refresh-response") {
-                        return false;
-                    }
-                    let response = message as CoursesRefreshResponse;
-                    if (response.id !== id)
-                        return false;
-
-                    resolve(true);
-                    return true;
-                });
-
-                let messageToPost: CoursesRefreshRequest = {
-                    type: "courses-refresh-request",
-                    id: id,
-                };
-
-                vsApi.postMessage(messageToPost);
-            });
+        async getNavigation(path: string): Promise<CourseNode[]> {
+            const id = makeId();
+            const resp = await request<NavigationRequest, NavigationResponse>(
+                { type: "navigation-request", id, path },
+                "navigation-response",
+                id,
+            );
+            return resp.children;
         },
 
-        async logout() {
-            let id = Math.random().toString() + Math.random().toString();
+        async getAssignment(path: string): Promise<Assignment> {
+            const id = makeId();
+            const resp = await request<AssignmentRequest, AssignmentResponse>(
+                { type: "assignment-request", id, path },
+                "assignment-response",
+                id,
+            );
+            return resp.assignment;
+        },
 
-            return new Promise<Boolean>((resolve, reject) => {
-                vsApi.onceMessage((message: Message) => {
-                    if (message.type !== "logout-response") {
-                        return false;
-                    }
-                    let response = message as LogoutResponse;
-                    if (response.id !== id)
-                        return false;
+        async pickFiles(): Promise<FileInfo[]> {
+            const id = makeId();
+            const resp = await request<PickFilesRequest, PickFilesResponse>(
+                { type: "pick-files-request", id },
+                "pick-files-response",
+                id,
+            );
+            return resp.files;
+        },
 
-                    resolve(true);
-                    return true;
-                });
+        async submit(assignmentPath: string, files: FileInfo[]): Promise<{ success: boolean; error?: string; resultsPath?: string }> {
+            const id = makeId();
+            const resp = await request<SubmitRequest, SubmitResponse>(
+                { type: "submit-request", id, assignmentPath, files },
+                "submit-response",
+                id,
+            );
+            return { success: resp.success, error: resp.error, resultsPath: resp.resultsPath };
+        },
 
-                let messageToPost: LogoutRequest = {
-                    type: "logout-request",
-                    id: id,
-                };
-
-                vsApi.postMessage(messageToPost);
-            });
-        }
+        async getResults(path: string): Promise<SubmissionResult> {
+            const id = makeId();
+            const resp = await request<ResultsRequest, ResultsResponse>(
+                { type: "results-request", id, path },
+                "results-response",
+                id,
+            );
+            return resp.result;
+        },
     };
 }
 

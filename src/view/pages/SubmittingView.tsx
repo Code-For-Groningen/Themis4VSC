@@ -1,67 +1,36 @@
 import * as React from "react";
 import { useEffect, useState } from "react";
-import { Course } from "../../protocol/protocol";
+import { CourseNode } from "../../protocol/protocol";
 import CourseTree from "../components/CourseTree";
 import useThemisClient from "../hooks/useThemisClient";
 
+function SubmittingView(props: { onSelectAssignment: (node: CourseNode) => void }) {
+    const client = useThemisClient();
+    const [rootNodes, setRootNodes] = useState<CourseNode[] | undefined>(undefined);
+    const [loading, setLoading] = useState(true);
 
-function CourseList() {
-    let client = useThemisClient();
+    useEffect(() => {
+        client.getNavigation("/").then(nodes => {
+            setRootNodes(nodes);
+            setLoading(false);
+        });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    let [courses, setCourses] = useState<Course>(undefined);
-    let [loading, setLoading] = useState(true);
-
-    function refreshCourseList() {
-        setTimeout(() => {
-            client.getRootCourse().then((courses) => {
-                setCourses(courses);
-                setLoading(false);
-            });
-        }, 1000);
+    if (loading) {
+        return <div className="loading">Loading courses...</div>;
     }
 
-
-    useEffect(refreshCourseList, []);
-
-    return <>
-        {loading ?
-            <div> Please wait! We are indexing courses. (This may take a while) </div>
-            :
-            <>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <div>
-                        Course List
-                    </div>
-                    <div>
-                        <button onClick={async () => {
-                            // Invalidate state to prevent double submission
-                            setLoading(true);
-                            setCourses(undefined);
-
-                            // Clear cache
-                            await client.refreshCourses();
-
-                            // Refresh
-                            refreshCourseList();
-                        }}>
-                            Refresh
-                        </button>
-                    </div>
-                </div>
-                <CourseTree course={courses} setSelectedAssignment={() => { }} layer={0} />
-            </>
-        }
-    </>;
-}
-
-function SubmittingView() {
-    let client = useThemisClient();
-
-    let [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
-
-    return <>
-        <CourseList />
-    </>;
+    return <div>
+        <div className="section-title">Courses</div>
+        {(rootNodes || []).map(node =>
+            <CourseTree
+                key={node.path}
+                node={node}
+                onSelectAssignment={props.onSelectAssignment}
+                layer={0}
+            />
+        )}
+    </div>;
 }
 
 export default SubmittingView;

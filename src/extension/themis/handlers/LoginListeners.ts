@@ -3,82 +3,92 @@ import { CheckLoginRequest, CheckLoginResponse, LoginRequest, LoginResponse, Log
 import ThemisClient from "../ThemisClient";
 
 export function handleCheckLogin(context: ExtensionContext, client: ThemisClient, webview: Webview) {
-    webview.onDidReceiveMessage((message: Message) => {
-        if (message.type !== "check-login-request")
-            return;
-        let parsedMessage = message as CheckLoginRequest;
+    webview.onDidReceiveMessage(async (message: Message) => {
+        if (message.type !== "check-login-request") { return; }
+        const req = message as CheckLoginRequest;
+        
+        console.log("[THEMIS] handleCheckLogin: Received check-login-request");
 
-        client.getClient().get("https://themis.housing.rug.nl/course/").then(async (response) => {
-            let possibleLogin = client.checkLoggedInPage(response.data);
+        let user = await client.checkLogin();
 
-            if (possibleLogin === null) {
-                // Session expired, try to login with the stored credentials
-                let username = await context.secrets.get("themis-username");
-                let password = await context.secrets.get("themis-password");
-
-                if (username && password) {
-                    let loggedInUser = await client.login(username, password);
-                    if (loggedInUser)
-                        possibleLogin = loggedInUser;
+        if (!user) {
+            console.log("[THEMIS] handleCheckLogin: Not logged in, attempting auto-login with stored credentials");
+            // Try stored credentials
+            const username = await context.secrets.get("themis-username");
+            const password = await context.secrets.get("themis-password");
+            const totp = await context.secrets.get("themis-totp");
+            if (username && password && totp) {
+                console.log(`[THEMIS] handleCheckLogin: Found stored credentials for ${username}, attempting login`);
+                user = await client.login(username, password, totp);
+                if (user) {
+                    console.log(`[THEMIS] handleCheckLogin: Auto-login successful: ${user.studentId}`);
+                } else {
+                    console.log("[THEMIS] handleCheckLogin: Auto-login failed");
                 }
+            } else {
+                console.log("[THEMIS] handleCheckLogin: No stored credentials available");
             }
+        } else {
+            console.log(`[THEMIS] handleCheckLogin: Already logged in as ${user.studentId}`);
+        }
 
-            let responseMessage: CheckLoginResponse = {
-                type: "check-login-response",
-                id: parsedMessage.id,
-                loggedIn: possibleLogin !== null,
-                user: possibleLogin
-            };
-
-            webview.postMessage(responseMessage);
-        });
+        const resp: CheckLoginResponse = {
+            type: "check-login-response",
+            id: req.id,
+            loggedIn: user !== null,
+            user,
+        };
+        console.debug("[THEMIS] handleCheckLogin: Sending response", { loggedIn: resp.loggedIn, user: resp.user });
+        webview.postMessage(resp);
     }, undefined, context.subscriptions);
 }
 
 export function handleAttemptLogin(context: ExtensionContext, client: ThemisClient, webview: Webview) {
-    webview.onDidReceiveMessage((message: Message) => {
-        if (message.type !== "login-request")
-            return;
-        let parsedMessage = message as LoginRequest;
+    webview.onDidReceiveMessage(async (message: Message) => {
+        if (message.type !== "login-request") { return; }
+        const req = message as LoginRequest;
 
-        client.login(parsedMessage.username, parsedMessage.password).then(loggedInUser => {
-            if (loggedInUser) {
-                // Store into the secret for later use
-                context.secrets.store("themis-username", parsedMessage.username);
-                context.secrets.store("themis-password", parsedMessage.password);
-            }
+        console.log(`[THEMIS] handleAttemptLogin: Received login-request for user ${req.username}`);
+        console.log(`[THEMIS] handleAttemptLogin: Starting login with username=${req.username}, totp=***`);
+        
+        const user = await client.login(req.username, req.password, req.totp);
+        if (user) {
+            console.log(`[THEMIS] handleAttemptLogin: Login successful for ${user.studentId}, storing credentials`);
+            await context.secrets.store("themis-username", req.username);
+            await context.secrets.store("themis-password", req.password);
+            await context.secrets.store("themis-totp", req.totp);
+        } else {
+            console.log(`[THEMIS] handleAttemptLogin: Login failed for ${req.username}`);
+        }
 
-            let responseMessage: LoginResponse = {
-                type: "login-response",
-                id: parsedMessage.id,
-                success: loggedInUser !== null,
-                user: loggedInUser
-            };
-
-            webview.postMessage(responseMessage);
-        });
+        const resp: LoginResponse = {
+            type: "login-response",
+            id: req.id,
+            success: user !== null,
+            user,
+        };
+        console.debug("[THEMIS] handleAttemptLogin: Sending response", { success: resp.success, user: resp.user });
+        webview.postMessage(resp);
     }, undefined, context.subscriptions);
 }
 
 export function handleLogout(context: ExtensionContext, client: ThemisClient, webview: Webview) {
-    webview.onDidReceiveMessage((message: Message) => {
-        if (message.type !== "logout-request")
-            return;
-        let parsedMessage = message as LogoutRequest;
+    webview.onDidReceiveMessage(async (message: Message) => {
+        if (message.type !== "logout-request") { return; }
+        const req = message as LogoutRequest;
 
-        client.logout().then(success => {
-            if (success) {
-                // Remove from the secret
-                context.secrets.delete("themis-username");
-                context.secrets.delete("themis-password");
-            }
+        console.log("[THEMIS] handleLogout: Received logout-request");
+        await client.logout();
+        console.log("[THEMIS] handleLogout: Client logged out, clearing stored credentials");
+        await context.secrets.delete("themis-username");
+        await context.secrets.delete("themis-password");
+        await context.secrets.delete("themis-totp");
 
-            let responseMessage: LogoutResponse = {
-                type: "logout-response",
-                id: parsedMessage.id,
-            };
-
-            webview.postMessage(responseMessage);
-        });
+        const resp: LogoutResponse = {
+            type: "logout-response",
+            id: req.id,
+        };
+        console.debug("[THEMIS] handleLogout: Sending logout response");
+        webview.postMessage(resp);
     }, undefined, context.subscriptions);
 }

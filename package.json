@@ -3,8 +3,9 @@
   "displayName": "Themis4VSC",
   "description": "Full Themis integration for VSCode",
   "version": "0.0.1",
+  "publisher": "themis4vsc",
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.110.0"
   },
   "categories": [
     "Other"
@@ -14,6 +15,20 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "themis4vsc.submitToThemis",
+        "title": "Submit to Themis"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "themis4vsc.submitToThemis",
+          "group": "9_themis@1"
+        }
+      ]
+    },
     "views": {
       "themis-sidebar": [
         {
@@ -36,39 +51,41 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run package",
+    "vscode:prepublish": "npm run package",
     "webpack": "webpack --mode development",
     "watch": "webpack --mode development --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
+    "vsce:package": "vsce package",
     "test-compile": "tsc -p ./"
   },
   "devDependencies": {
-    "@types/glob": "^8.0.1",
-    "@types/mocha": "^10.0.1",
-    "@types/node": "16.x",
-    "@types/react": "^18.0.28",
-    "@types/react-dom": "^18.0.11",
-    "@types/vscode": "^1.75.0",
-    "@typescript-eslint/eslint-plugin": "^5.49.0",
-    "@typescript-eslint/parser": "^5.49.0",
-    "@vscode/test-electron": "^2.2.2",
-    "eslint": "^8.33.0",
-    "glob": "^8.1.0",
-    "mocha": "^10.1.0",
-    "ts-loader": "^9.4.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "~25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.110.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@typescript-eslint/parser": "^8.57.1",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.7.1",
+    "eslint": "^10.0.3",
+    "glob": "^13.0.6",
+    "mocha": "^11.7.5",
+    "ts-loader": "^9.5.4",
     "ts-node": "^10.9.2",
-    "typescript": "^4.9.4",
-    "webpack": "^5.75.0",
-    "webpack-cli": "^5.0.1"
+    "typescript": "^5.9.3",
+    "webpack": "^5.105.4",
+    "webpack-cli": "^7.0.2"
   },
   "dependencies": {
-    "@types/tough-cookie": "^4.0.2",
-    "axios": "^1.3.4",
-    "form-data": "^4.0.0",
-    "node-html-parser": "^6.1.5",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "socket.io-client": "^4.7.0",
-    "tough-cookie": "^4.1.2"
+    "@types/tough-cookie": "^4.0.5",
+    "axios": "^1.13.6",
+    "form-data": "^4.0.5",
+    "lucide-react": "^0.577.0",
+    "node-html-parser": "^7.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "socket.io-client": "^4.8.3",
+    "tough-cookie": "^6.0.1"
   }
 }

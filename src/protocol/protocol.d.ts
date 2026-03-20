@@ -6,14 +6,12 @@ export type Identifiable = {
     id: string;
 }
 
-// ─── User Info ───
 
 export interface LoggedInUserInformation {
     studentId: string;
     name: string;
 }
 
-// ─── Authentication ───
 
 export interface CheckLoginRequest extends Message, Identifiable {
     type: "check-login-request";
@@ -46,7 +44,6 @@ export interface LogoutResponse extends Message, Identifiable {
     type: "logout-response";
 }
 
-// ─── Courses (Navigation API) ───
 
 export type CourseNode = {
     title: string;
@@ -55,6 +52,9 @@ export type CourseNode = {
     icon: string;
     children?: CourseNode[];
     childrenLoaded?: boolean;
+    isExam?: boolean;
+    isQuiz?: boolean;
+    visible?: boolean;
 };
 
 export interface NavigationRequest extends Message, Identifiable {
@@ -67,11 +67,11 @@ export interface NavigationResponse extends Message, Identifiable {
     children: CourseNode[];
 }
 
-// ─── Assignment Details ───
 
 export interface AssignmentOption {
     name: string;
     value: string;
+    description?: string;
 }
 
 export interface AssignmentOptionGroup {
@@ -91,6 +91,8 @@ export interface Assignment {
     node: CourseNode;
     options: AssignmentOptionGroup[];
     testCases: AssignmentTestCase[];
+    grade?: string;
+    deadline?: string;
 }
 
 export interface AssignmentRequest extends Message, Identifiable {
@@ -103,7 +105,6 @@ export interface AssignmentResponse extends Message, Identifiable {
     assignment: Assignment;
 }
 
-// ─── File Submission ───
 
 export interface FileInfo {
     name: string;
@@ -132,20 +133,26 @@ export interface SubmitResponse extends Message, Identifiable {
     resultsPath?: string;
 }
 
-// ─── Submission Results ───
 
-export type TestCaseStatus = "passed" | "failed" | "error" | "pending" | "running";
+// All Themis status values from the judge server
+export type ThemisStatus =
+    | "passed" | "failed" | "error" | "pending" | "queued" | "none"
+    | "compilerr" | "runtimerr" | "timeout" | "outlimit" | "diff" | "deadline";
 
 export interface TestCaseResult {
     name: string;
-    status: TestCaseStatus;
+    status: ThemisStatus;
     details?: string;
+    message?: string;
+    grade?: string;
+    hint?: string;
 }
 
 export interface SubmissionResult {
-    status: "compiling" | "running" | "judging" | "done" | "error";
+    status: ThemisStatus;
     testCases: TestCaseResult[];
     summary?: string;
+    percentage?: number;
 }
 
 export interface ResultsRequest extends Message, Identifiable {
@@ -162,4 +169,115 @@ export interface ResultsUpdateMessage extends Message {
     type: "results-update";
     path: string;
     result: SubmissionResult;
+}
+
+export interface WatchResultsRequest extends Message, Identifiable {
+    type: "watch-results-request";
+    path: string;
+}
+
+export interface WatchResultsResponse extends Message, Identifiable {
+    type: "watch-results-response";
+}
+
+export interface UnwatchResultsRequest extends Message, Identifiable {
+    type: "unwatch-results-request";
+}
+
+
+export interface PinnedItem {
+    path: string;
+    title: string;
+    submittable: boolean;
+}
+
+export interface PinItemRequest extends Message, Identifiable {
+    type: "pin-item-request";
+    path: string;
+    title: string;
+    submittable: boolean;
+    pinned: boolean;
+}
+
+export interface PinItemResponse extends Message, Identifiable {
+    type: "pin-item-response";
+    pinnedItems: PinnedItem[];
+}
+
+export interface GetPinnedItemsRequest extends Message, Identifiable {
+    type: "get-pinned-items-request";
+}
+
+export interface GetPinnedItemsResponse extends Message, Identifiable {
+    type: "get-pinned-items-response";
+    pinnedItems: PinnedItem[];
+}
+
+
+export interface SubmitFromExplorerNotification extends Message {
+    type: "submit-from-explorer";
+    files: FileInfo[];
+}
+
+
+export interface SubmissionSummary {
+    path: string;
+    date: string;
+    status: string;
+    score?: string;
+}
+
+export interface GetHistoryRequest extends Message, Identifiable {
+    type: "get-history-request";
+    assignmentPath: string;
+}
+
+export interface GetHistoryResponse extends Message, Identifiable {
+    type: "get-history-response";
+    submissions: SubmissionSummary[];
+}
+
+
+export interface GetActiveFileRequest extends Message, Identifiable {
+    type: "get-active-file-request";
+}
+
+export interface GetActiveFileResponse extends Message, Identifiable {
+    type: "get-active-file-response";
+    file: FileInfo | null;
+}
+
+
+export interface DownloadInputsRequest extends Message, Identifiable {
+    type: "download-inputs-request";
+    assignmentPath: string;
+}
+
+export interface DownloadInputsResponse extends Message, Identifiable {
+    type: "download-inputs-response";
+    success: boolean;
+    count: number;
+    error?: string;
+}
+
+
+export interface ShowDiffRequest extends Message {
+    type: "show-diff-request";
+    testCaseName: string;
+    expected: string;
+    actual: string;
+}
+
+
+export interface PasteTerminalRequest extends Message {
+    type: "paste-terminal-request";
+    command: string;
+}
+
+
+export interface ShowTestCaseIORequest extends Message {
+    type: "show-testcase-io-request";
+    testCaseName: string;
+    input: string;
+    output: string;
 }

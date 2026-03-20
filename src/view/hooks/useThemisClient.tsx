@@ -5,7 +5,15 @@ import {
     CheckLoginRequest,
     CheckLoginResponse,
     CourseNode,
+    DownloadInputsRequest,
+    DownloadInputsResponse,
     FileInfo,
+    GetActiveFileRequest,
+    GetActiveFileResponse,
+    GetHistoryRequest,
+    GetHistoryResponse,
+    GetPinnedItemsRequest,
+    GetPinnedItemsResponse,
     LoggedInUserInformation,
     LoginRequest,
     LoginResponse,
@@ -14,13 +22,22 @@ import {
     Message,
     NavigationRequest,
     NavigationResponse,
+    PasteTerminalRequest,
     PickFilesRequest,
     PickFilesResponse,
+    PinItemRequest,
+    PinItemResponse,
+    PinnedItem,
     ResultsRequest,
     ResultsResponse,
+    ShowTestCaseIORequest,
     SubmissionResult,
+    SubmissionSummary,
     SubmitRequest,
     SubmitResponse,
+    WatchResultsRequest,
+    WatchResultsResponse,
+    UnwatchResultsRequest,
 } from "../../protocol/protocol";
 import useVSApi from "./useVSApi";
 
@@ -125,6 +142,86 @@ function useThemisClient() {
                 id,
             );
             return resp.result;
+        },
+
+        async getPinnedItems(): Promise<PinnedItem[]> {
+            const id = makeId();
+            const resp = await request<GetPinnedItemsRequest, GetPinnedItemsResponse>(
+                { type: "get-pinned-items-request", id },
+                "get-pinned-items-response",
+                id,
+            );
+            return resp.pinnedItems;
+        },
+
+        async pinItem(path: string, title: string, submittable: boolean, pinned: boolean): Promise<PinnedItem[]> {
+            const id = makeId();
+            const resp = await request<PinItemRequest, PinItemResponse>(
+                { type: "pin-item-request", id, path, title, submittable, pinned },
+                "pin-item-response",
+                id,
+            );
+            return resp.pinnedItems;
+        },
+
+        async getActiveFile(): Promise<FileInfo | null> {
+            const id = makeId();
+            const resp = await request<GetActiveFileRequest, GetActiveFileResponse>(
+                { type: "get-active-file-request", id },
+                "get-active-file-response",
+                id,
+            );
+            return resp.file;
+        },
+
+        async watchResults(path: string): Promise<void> {
+            const id = makeId();
+            await request<WatchResultsRequest, WatchResultsResponse>(
+                { type: "watch-results-request", id, path },
+                "watch-results-response",
+                id,
+            );
+        },
+
+        unwatchResults(): void {
+            vsApi.postMessage({ type: "unwatch-results-request" } as UnwatchResultsRequest);
+        },
+
+        async getHistory(assignmentPath: string): Promise<SubmissionSummary[]> {
+            const id = makeId();
+            const resp = await request<GetHistoryRequest, GetHistoryResponse>(
+                { type: "get-history-request", id, assignmentPath },
+                "get-history-response",
+                id,
+            );
+            return resp.submissions;
+        },
+
+        showDiff(testCaseName: string, expected: string, actual: string): void {
+            vsApi.postMessage({ type: "show-diff-request", testCaseName, expected, actual });
+        },
+
+        async downloadInputs(assignmentPath: string): Promise<{ success: boolean; count: number; error?: string }> {
+            const id = makeId();
+            const resp = await request<DownloadInputsRequest, DownloadInputsResponse>(
+                { type: "download-inputs-request", id, assignmentPath },
+                "download-inputs-response",
+                id,
+            );
+            return { success: resp.success, count: resp.count, error: resp.error };
+        },
+
+        pasteToTerminal(command: string): void {
+            vsApi.postMessage({ type: "paste-terminal-request", command } as PasteTerminalRequest);
+        },
+
+        showTestCaseIO(testCaseName: string, input: string, output: string): void {
+            vsApi.postMessage({
+                type: "show-testcase-io-request",
+                testCaseName,
+                input,
+                output,
+            } as ShowTestCaseIORequest);
         },
     };
 }

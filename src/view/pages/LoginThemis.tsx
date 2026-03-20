@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useState } from 'react';
 import { LoggedInUserInformation } from '../../protocol/protocol';
 import useThemisClient from '../hooks/useThemisClient';
+import { LogIn, User, Lock, ShieldCheck } from 'lucide-react';
 
 function LoginThemis(props: { onLoggedIn: (user: LoggedInUserInformation) => void }) {
     const [username, setUsername] = useState('');
@@ -40,7 +41,7 @@ function LoginThemis(props: { onLoggedIn: (user: LoggedInUserInformation) => voi
         <h3 className="login-title">Themis Login</h3>
         <p className="login-subtitle">Sign in with your RUG credentials</p>
         {error && <div className="alert alert-error">{error}</div>}
-        <label className="form-label">Student ID</label>
+        <label className="form-label"><User size={11} style={{ marginRight: 4, verticalAlign: -1 }} />Student ID</label>
         <input
             className="form-input"
             type="text"
@@ -50,7 +51,7 @@ function LoginThemis(props: { onLoggedIn: (user: LoggedInUserInformation) => voi
             onKeyDown={e => e.key === 'Enter' && handleLogin()}
             disabled={loading}
         />
-        <label className="form-label">Password</label>
+        <label className="form-label"><Lock size={11} style={{ marginRight: 4, verticalAlign: -1 }} />Password</label>
         <input
             className="form-input"
             type="password"
@@ -60,7 +61,7 @@ function LoginThemis(props: { onLoggedIn: (user: LoggedInUserInformation) => voi
             onKeyDown={e => e.key === 'Enter' && handleLogin()}
             disabled={loading}
         />
-        <label className="form-label">2FA Code (TOTP)</label>
+        <label className="form-label"><ShieldCheck size={11} style={{ marginRight: 4, verticalAlign: -1 }} />2FA Code (TOTP)</label>
         <input
             className="form-input"
             type="text"
@@ -74,6 +75,7 @@ function LoginThemis(props: { onLoggedIn: (user: LoggedInUserInformation) => voi
             maxLength={6}
         />
         <button className="btn btn-primary" onClick={handleLogin} disabled={loading}>
+            <LogIn size={13} style={{ marginRight: 4 }} />
             {loading ? "Signing in..." : "Sign In"}
         </button>
     </div>;

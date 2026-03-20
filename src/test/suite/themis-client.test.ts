@@ -8,7 +8,6 @@ import * as assert from 'assert';
  * Run: npx mocha --require ts-node/register src/test/suite/themis-client.test.ts
  */
 
-// ─── Test Utilities ───
 
 import { parse } from 'node-html-parser';
 
@@ -108,7 +107,6 @@ function parseResults(html: string): { status: string; testCases: Array<{ name: 
     return { status: overallStatus, testCases, summary };
 }
 
-// ─── Tests ───
 
 describe('ThemisClient Parsing Tests', () => {
 

@@ -10,18 +10,18 @@ import {
     CourseNode,
     LoggedInUserInformation,
     SubmissionResult,
+    SubmissionSummary,
     TestCaseResult,
+    ThemisStatus,
 } from '../../protocol/protocol';
 import { parse } from 'node-html-parser';
 import { ExtensionContext } from 'vscode';
-
+import { io, Socket } from 'socket.io-client';
 const BASE_URL = "https://themis.housing.rug.nl";
-
 class ThemisClient {
     private client: AxiosInstance;
     private cookieJar: CookieJar;
     private context: ExtensionContext;
-
     constructor(context: ExtensionContext) {
         this.cookieJar = new CookieJar();
         this.client = axios.create({
@@ -32,9 +32,7 @@ class ThemisClient {
         this.context = context;
         this.restoreSession();
     }
-
-    // ─── Session persistence ───
-
+    
     private async restoreSession() {
         const raw = await this.context.secrets.get("themis-cookies");
         if (raw) {
@@ -55,7 +53,6 @@ class ThemisClient {
             console.log(`[THEMIS] restoreSession: No stored cookies found`);
         }
     }
-
     private async persistSession() {
         try {
             const allCookies = this.cookieJar.getCookiesSync(BASE_URL);
@@ -71,7 +68,6 @@ class ThemisClient {
             console.error(`[THEMIS] persistSession: Error saving cookies:`, e);
         }
     }
-
     private getCookieStringForUrl(url: string): string {
         try {
             const cookies = this.cookieJar.getCookieStringSync(url);
@@ -86,14 +82,12 @@ class ThemisClient {
             return "";
         }
     }
-
     private storeCookiesFromUrl(url: string, resp: AxiosResponse) {
         // CRITICAL: Use the raw Node.js response headers, NOT axios's headers.
         // Axios joins multiple Set-Cookie headers into a single comma-separated string,
         // which breaks cookie parsing. Node's http module always keeps set-cookie as an array.
         const rawRes = (resp as any).request?.res;
         const setCookieArray: string[] = rawRes?.headers?.["set-cookie"] || [];
-
         if (setCookieArray.length > 0) {
             console.log(`[THEMIS] storeCookiesFromUrl: Storing ${setCookieArray.length} cookie(s) from Set-Cookie headers for ${url}`);
             for (const raw of setCookieArray) {
@@ -109,7 +103,6 @@ class ThemisClient {
             }
         }
     }
-
     private logAllCookies(label: string) {
         try {
             const urlsToCheck = [BASE_URL, "https://connect.surfconext.nl", "https://signon.rug.nl", "https://xfactor.rug.nl"];
@@ -122,9 +115,7 @@ class ThemisClient {
             console.error(`[THEMIS] ${label}: Error logging cookies:`, e);
         }
     }
-
-    // ─── HTTP helpers with cross-domain cookie support ───
-
+    
     /** Browser-like headers required by SURFconext to issue a SESSION cookie. */
     private browserHeaders(referer?: string, isCrossOrigin = false): Record<string, string> {
         return {
@@ -140,7 +131,6 @@ class ThemisClient {
             "Connection": "keep-alive",
         };
     }
-
     private async rawGet(url: string, referer?: string): Promise<AxiosResponse> {
         console.log(`[THEMIS] rawGet: ${url.substring(0, 150)}`);
         const isCross = !!(referer && new URL(url).hostname !== new URL(referer).hostname);
@@ -157,7 +147,6 @@ class ThemisClient {
         this.storeCookiesFromUrl(url, resp);
         return resp;
     }
-
     private async rawPost(url: string, data: string, contentType: string, referer?: string): Promise<AxiosResponse> {
         console.log(`[THEMIS] rawPost: ${url.substring(0, 150)}`);
         const isCross = !!(referer && new URL(url).hostname !== new URL(referer).hostname);
@@ -175,7 +164,6 @@ class ThemisClient {
         this.storeCookiesFromUrl(url, resp);
         return resp;
     }
-
     private resolveRedirect(resp: AxiosResponse, currentUrl: string): string | null {
         const loc = resp.headers["location"];
         if (!loc) { return null; }
@@ -183,7 +171,6 @@ class ThemisClient {
         const base = new URL(currentUrl);
         return new URL(loc, base.origin).href;
     }
-
     /** Follow a chain of 302 redirects, returning the final non-redirect response. */
     private async followRedirects(url: string, referer?: string, maxHops = 15): Promise<{ resp: AxiosResponse; url: string }> {
         let currentUrl = url;
@@ -201,7 +188,6 @@ class ThemisClient {
         }
         throw new Error("Too many redirects in OIDC flow");
     }
-
     private async get(path: string) {
         const url = `${BASE_URL}${path}`;
         const resp = await this.rawGet(url);
@@ -214,7 +200,6 @@ class ThemisClient {
         }
         return resp;
     }
-
     private async post(path: string, data: any, extraHeaders?: Record<string, string>) {
         const url = `${BASE_URL}${path}`;
         const resp = await this.client.post(path, data, {
@@ -223,9 +208,7 @@ class ThemisClient {
         this.storeCookiesFromUrl(url, resp);
         return resp;
     }
-
-    // ─── Auth: full OIDC flow ───
-
+    
     public checkLoggedInPage(html: string): LoggedInUserInformation | null {
         // Themis renders: <a href="/user" class="iconize user">Name (s1234567)</a>
         const match = /<a href="\/user"[^>]*>([^<(]+)\(([sp][0-9]{7})\)<\/a>/i.exec(html);
@@ -233,14 +216,11 @@ class ThemisClient {
             console.debug("[THEMIS] checkLoggedInPage: No logged-in pattern found in HTML");
             return null;
         }
-
         const name = match[1].trim();
         const studentId = match[2].toUpperCase();
-
         console.debug(`[THEMIS] checkLoggedInPage: Found logged-in user: ${studentId} (${name})`);
         return { name, studentId };
     }
-
     /**
      * Full OIDC login flow:
      * 1. GET /log/in/oidc  → 302 to SURFconext OIDC authorize
@@ -270,7 +250,6 @@ class ThemisClient {
                 return null; 
             }
             console.log(`[THEMIS] Step 1: Resolved redirect to: ${nextUrl.substring(0, 100)}...`);
-
             // Step 2: Follow redirects through SURFconext (authorize → saml2/authenticate → engine SSO)
             console.log("[THEMIS] Step 2: Following redirects through SURFconext...");
             this.logAllCookies("Step 2 BEFORE redirects");
@@ -281,7 +260,6 @@ class ThemisClient {
             if (engineResp.status === 200 && typeof engineResp.data === "string") {
                 console.log(`[THEMIS] Step 2: Full response body (${engineResp.data.length} chars):\n${engineResp.data}`);
             }
-
             // Step 3: Parse auto-submit SAML form (SURFconext engine → signon.rug.nl)
             console.log("[THEMIS] Step 3: Extracting SAML form from engine response");
             var bodyStr = String(engineResp.data);
@@ -289,7 +267,6 @@ class ThemisClient {
             console.log(`[THEMIS] Step 3: Full response body:\n${bodyStr}`);
             let formData = this.extractFormData(engineResp.data);
             let resp: AxiosResponse;
-
             if (!formData) {
                 console.log("[THEMIS] Step 3: extractFormData returned null, trying fallbacks...");
                 // Fallback: check for meta-refresh redirect
@@ -308,7 +285,6 @@ class ThemisClient {
                 if (samlRedirect) {
                     console.log(`[THEMIS] Step 3: Found SAML redirect URL`);
                 }
-
                 const fallbackUrl = metaRefresh?.[1] || jsRedirect?.[1] || samlRedirect?.[1];
                 if (fallbackUrl) {
                     const resolvedFallback = fallbackUrl.startsWith("http")
@@ -351,7 +327,6 @@ class ThemisClient {
             } else {
                 console.log(`[THEMIS] Step 3: SAML form extracted, action=${formData.action.substring(0, 100)}..., fields=${Object.keys(formData.fields).join(", ")}`);
             }
-
             // Submit SAML request to RUG signon
             console.log("[THEMIS] Step 3: Submitting SAML form to RUG signon...");
             resp = await this.rawPost(
@@ -361,7 +336,6 @@ class ThemisClient {
                 engineUrl,
             );
             console.log(`[THEMIS] Step 3: SAML submission status=${resp.status}`);
-
             // Step 4: Follow auto-submit to credential form
             // signon.rug.nl returns another auto-submit form
             console.log("[THEMIS] Step 4: Extracting credential form from signon response");
@@ -376,7 +350,6 @@ class ThemisClient {
                 const actionUrl = formData.action.startsWith("http")
                     ? formData.action
                     : new URL(formData.action, "https://signon.rug.nl").href;
-
                 console.log(`[THEMIS] Step 4: Submitting auto-submit form to ${actionUrl.substring(0, 100)}...`);
                 resp = await this.rawPost(
                     actionUrl,
@@ -402,7 +375,6 @@ class ThemisClient {
                     console.log(`[THEMIS] Step 4: Response body (first 1500 chars):\n${resp.data.substring(0, 1500)}`);
                 }
             }
-
             // Step 5: POST credentials to RUG login form
             // The response should be the login form with Ecom_User_ID and Ecom_Password
             console.log("[THEMIS] Step 5: Extracting credential form for username/password submission");
@@ -416,7 +388,6 @@ class ThemisClient {
             credentialFields["Ecom_Password"] = password;
             credentialFields["option"] = "credential";
             console.log(`[THEMIS] Step 5: Credential fields to submit: ${Object.keys(credentialFields).join(", ")}`);
-
             // Determine the POST URL for credentials
             let credPostUrl = "https://signon.rug.nl/nidp/saml2/sso?id=100&sid=0&option=credential&sid=0";
             if (formData && formData.action) {
@@ -425,7 +396,6 @@ class ThemisClient {
                     : new URL(formData.action, "https://signon.rug.nl").href;
             }
             console.log(`[THEMIS] Step 5: Submitting credentials to ${credPostUrl.substring(0, 100)}...`);
-
             resp = await this.rawPost(
                 credPostUrl,
                 new URLSearchParams(credentialFields).toString(),
@@ -433,14 +403,12 @@ class ThemisClient {
                 "https://signon.rug.nl/nidp/saml2/sso",
             );
             console.log(`[THEMIS] Step 5: Credential submission response status=${resp.status}`);
-
             // Step 6: Handle TOTP / xfactor.rug.nl
             // After credentials, signon returns an auto-submit form that redirects to xfactor.
             // We must follow that auto-submit to reach the real TOTP entry page (which has input name="nffc"),
             // THEN submit nffc=totp to the contractcontinue URL.
             console.log("[THEMIS] Step 6: Looking for xfactor TOTP page (nffc input)");
             let currentUrl = credPostUrl;
-
             // Follow auto-submit forms (and redirects) until we land on the nffc TOTP page
             for (let hop = 0; hop < 5; hop++) {
                 const bs = typeof resp.data === "string" ? resp.data : "";
@@ -476,7 +444,6 @@ class ThemisClient {
                 console.log("[THEMIS] Step 6: No path to TOTP page found");
                 break;
             }
-
             bodyStr = typeof resp.data === "string" ? resp.data : "";
             if (bodyStr.includes('name="nffc"') || bodyStr.includes("name='nffc'")) {
                 console.log("[THEMIS] Step 6: TOTP required (nffc), submitting TOTP code");
@@ -506,13 +473,11 @@ class ThemisClient {
             } else {
                 console.log("[THEMIS] Step 6: No TOTP page detected, proceeding to SAML callback");
             }
-
             // Step 7: Follow the chain back through SAML responses → SURFconext → Themis
             console.log("[THEMIS] Step 7: Following SAML response chain back to Themis");
             let lastVisitedUrl = "";
             for (let bounce = 0; bounce < 15; bounce++) {
                 console.log(`[THEMIS] Step 7 (bounce ${bounce}): URL=${currentUrl.substring(0, 100)}, status=${resp.status}`);
-
                 if (resp.status >= 300 && resp.status < 400) {
                     const loc = this.resolveRedirect(resp, currentUrl);
                     if (!loc) { break; }
@@ -520,9 +485,7 @@ class ThemisClient {
                     resp = await this.rawGet(currentUrl, currentUrl);
                     continue;
                 }
-
                 const html = typeof resp.data === "string" ? resp.data : "";
-
                 // Follow any form (SAML POST binding or xfactor contractcontinue)
                 const autoForm = this.extractFormData(html);
                 if (autoForm && autoForm.action) {
@@ -539,7 +502,6 @@ class ThemisClient {
                     currentUrl = action;
                     continue;
                 }
-
                 // No form and no redirect — if we're not at Themis yet, retry once for JSESSIONID rotation
                 if (currentUrl !== lastVisitedUrl && !currentUrl.startsWith(BASE_URL)) {
                     console.log(`[THEMIS] Step 7 (bounce ${bounce}): No form/redirect; retrying for session rotation`);
@@ -547,7 +509,6 @@ class ThemisClient {
                     resp = await this.rawGet(currentUrl, currentUrl);
                     continue;
                 }
-
                 // Check if we landed on Themis
                 if (currentUrl.startsWith(BASE_URL)) {
                     const user = this.checkLoggedInPage(html);
@@ -558,11 +519,9 @@ class ThemisClient {
                     }
                     console.log(`[THEMIS] Step 7 (bounce ${bounce}): At Themis but not logged in yet`);
                 }
-
                 console.log(`[THEMIS] Step 7 (bounce ${bounce}): No further processing possible, breaking`);
                 break;
             }
-
             // Final check: see if the session is valid now
             console.log("[THEMIS] Step 8: Final login check");
             const check = await this.checkLogin();
@@ -579,14 +538,12 @@ class ThemisClient {
             return null;
         }
     }
-
     /** Extract form action and all hidden fields from an HTML auto-submit form. */
     private extractFormData(html: string): { action: string; fields: Record<string, string> } | null {
         if (typeof html !== "string") { return null; }
         const root = parse(html);
         const form = root.querySelector("form");
         if (!form) { return null; }
-
         const action = form.getAttribute("action") || "";
         const fields: Record<string, string> = {};
         for (const input of form.querySelectorAll("input")) {
@@ -598,7 +555,6 @@ class ThemisClient {
         }
         return { action, fields };
     }
-
     public async checkLogin(): Promise<LoggedInUserInformation | null> {
         try {
             console.debug("[THEMIS] checkLogin: GET /course/");
@@ -616,7 +572,6 @@ class ThemisClient {
             return null;
         }
     }
-
     public async logout(): Promise<boolean> {
         try {
             console.log("[THEMIS] logout: Calling /log/out");
@@ -631,66 +586,54 @@ class ThemisClient {
         console.log("[THEMIS] logout: Deleted stored session");
         return true;
     }
-
-    // ─── Navigation API ───
-
+    
     public async getNavigation(path: string): Promise<CourseNode[]> {
         const resp = await this.get(`/api/navigation${path}`);
-        const html: string = resp.data;
-
-        // The navigation API returns HTML fragments with <a> links.
-        // Parse them into CourseNode objects.
-        const root = parse(html);
-        const links = root.querySelectorAll("a");
-
-        const nodes: CourseNode[] = [];
-        for (const link of links) {
-            const href = link.getAttribute("href") || "";
-            const navHref = link.getAttribute("data-navhref") || "";
-            const classes = link.getAttribute("class") || "";
-            const title = link.text.trim();
-
-            if (!title) { continue; }
-
-            const submittable = classes.includes("ass-submitable");
-            let icon = "folder";
-            // Extract icon from class list
-            const iconMatch = classes.match(/iconize\s+(\S+)/);
-            if (iconMatch) { icon = iconMatch[1]; }
-
-            // The path for navigation is from data-navhref (e.g. /api/navigation/2025-2026/os)
-            // The course path is from href (e.g. /course/2025-2026/os)
-            // We want the path segment after /api/navigation or /course
-            let nodePath = "";
-            if (navHref) {
-                nodePath = navHref.replace(/^\/api\/navigation/, "");
-            } else if (href) {
-                nodePath = href.replace(/^\/course/, "");
+        const data = resp.data;
+        // The navigation API returns a JSON array of child nodes.
+        // Each entry: { path, title, submitable, isExam, visible }
+        let items: any[];
+        if (typeof data === "string") {
+            try {
+                items = JSON.parse(data);
+            } catch {
+                console.error("[THEMIS] getNavigation: Failed to parse JSON response");
+                return [];
             }
-
-            nodes.push({
-                title,
-                path: nodePath,
+        } else if (Array.isArray(data)) {
+            items = data;
+        } else {
+            console.error("[THEMIS] getNavigation: Unexpected response type", typeof data);
+            return [];
+        }
+        return items.map((item: any) => {
+            const submittable = !!item.submitable;
+            let icon = "ass-group";
+            if (submittable) {
+                icon = item.isQuiz ? "quiz" : "ass-submitable";
+            } else if (item.isExam) {
+                icon = "ass-exam";
+            }
+            return {
+                title: item.title || "",
+                path: item.path || "",
                 submittable,
                 icon,
-                childrenLoaded: submittable, // leaf nodes don't need children
-            });
-        }
-
-        return nodes;
+                isExam: !!item.isExam,
+                isQuiz: !!item.isQuiz,
+                visible: item.visible !== false,
+                childrenLoaded: submittable,
+            } as CourseNode;
+        });
     }
-
-    // ─── Assignment Details ───
-
+    
     public async getAssignment(path: string): Promise<Assignment> {
         const resp = await this.get(`/course${path}`);
         const root = parse(resp.data);
-
         // Parse config options
         const configEl = root.querySelector(".ass-config");
         const optionGroups: AssignmentOptionGroup[] = [];
         let currentGroup: AssignmentOptionGroup = { name: "General", options: [] };
-
         if (configEl) {
             for (const child of configEl.childNodes) {
                 const el = parse(child.toString());
@@ -704,12 +647,30 @@ class ThemisClient {
                 }
                 const cfgLine = el.querySelector(".cfg-line");
                 if (cfgLine) {
-                    const tip = cfgLine.querySelector(".tip");
+                    // temmies confirms: key = .cfg-key, value = .cfg-val
+                    const key = cfgLine.querySelector(".cfg-key");
                     const val = cfgLine.querySelector(".cfg-val");
-                    if (tip) {
+                    if (key && key.text.trim()) {
+                        const keyTip = key.querySelector(".tip[data-title]");
+                        const keyDescription = keyTip?.getAttribute("data-title")?.trim();
+                        const keyLabel = keyTip?.text.trim()
+                            || key.text.trim().split(/\s{2,}|\n/)[0].trim();
+                        let value = val ? val.text.trim() : "";
+                        if (val) {
+                            // Dates are in .tip[data-title] with ISO string, or <time datetime>
+                            const tipDate = val.querySelector(".tip[data-title]");
+                            if (tipDate) {
+                                const dt = tipDate.getAttribute("data-title") || "";
+                                if (/^\d{4}-\d{2}-\d{2}T/.test(dt)) { value = dt; }
+                            } else {
+                                const timeEl = val.querySelector("time[datetime]");
+                                if (timeEl) { value = timeEl.getAttribute("datetime") || value; }
+                            }
+                        }
                         currentGroup.options.push({
-                            name: tip.text.trim(),
-                            value: val ? val.text.trim() : "",
+                            name: keyLabel.replace(/:$/, ""),
+                            value,
+                            description: keyDescription,
                         });
                     }
                 }
@@ -718,52 +679,105 @@ class ThemisClient {
                 optionGroups.push(currentGroup);
             }
         }
-
-        // Parse test cases
+        // Parse test cases from the "Test cases" subsection (temmies-compatible)
+        // <div class="subsec round shade"> → <h4 class="info">Test cases</h4> → <div class="cfg-line"><a href="...">N.in</a>
         const testCases: AssignmentTestCase[] = [];
-        const testElements = root.querySelectorAll(".ass-testcase, .testcase");
-        for (const tc of testElements) {
-            const nameEl = tc.querySelector(".testcase-name, .name");
-            const hintEl = tc.querySelector(".testcase-hint, .hint");
-            const inputLink = tc.querySelector("a[href*='input']");
-            const outputLink = tc.querySelector("a[href*='output']");
-            testCases.push({
-                name: nameEl ? nameEl.text.trim() : "Test",
-                hint: hintEl ? hintEl.text.trim() : "",
-                visible: true,
-                input: inputLink ? (inputLink.getAttribute("href") || "") : "",
-                output: outputLink ? (outputLink.getAttribute("href") || "") : "",
+        const subsections = root.querySelectorAll(".subsec.round.shade");
+        for (const sub of subsections) {
+            const header = sub.querySelector("h4.info");
+            if (!header || !header.text.includes("Test")) { continue; }
+            // Group files by test number (strip .in / .out extension)
+            const tcMap = new Map<string, { input: string; output: string }>();
+            for (const link of sub.querySelectorAll(".cfg-line a")) {
+                const href = link.getAttribute("href") || "";
+                const filename = href.split("/").pop()?.split("?")[0] || "";
+                const base = filename.replace(/\.(in|out)$/, "");
+                if (!base) { continue; }
+                if (!tcMap.has(base)) { tcMap.set(base, { input: "", output: "" }); }
+                const tc = tcMap.get(base)!;
+                if (filename.endsWith(".in")) { tc.input = href; }
+                else if (filename.endsWith(".out")) { tc.output = href; }
+            }
+            // Stable sort by numeric prefix (1, 2, 10, ...)
+            const sorted = [...tcMap.entries()].sort((a, b) => {
+                const na = parseInt(a[0]) || 0;
+                const nb = parseInt(b[0]) || 0;
+                return na !== nb ? na - nb : a[0].localeCompare(b[0]);
             });
+            for (const [base, tc] of sorted) {
+                testCases.push({ name: base, hint: "", visible: true, input: tc.input, output: tc.output });
+            }
+            break; // only use first matching section
         }
-
+        // Parse grade/score
+        let grade: string | undefined;
+        const gradeEl = root.querySelector(".grade, .score, .points, .ass-grade");
+        if (gradeEl) {
+            grade = gradeEl.text.trim();
+        }
+        // Parse deadline from config options
+        let deadline: string | undefined;
+        for (const group of optionGroups) {
+            for (const opt of group.options) {
+                if (opt.name.toLowerCase().includes("deadline") || opt.name.toLowerCase().includes("due")) {
+                    deadline = opt.value;
+                    break;
+                }
+            }
+            if (deadline) { break; }
+        }
         return {
             node: { title: "", path, submittable: true, icon: "code" },
             options: optionGroups,
             testCases,
+            grade,
+            deadline,
         };
     }
-
-    // ─── Submission ───
-
+    
     public async submitFiles(assignmentPath: string, filePaths: string[]): Promise<{ success: boolean; error?: string; resultsPath?: string }> {
-        // First get the page to extract CSRF token
-        const page = await this.get(`/course${assignmentPath}`);
-        const csrfMatch = page.data.match(/name="_csrf"[^>]*value="([^"]+)"/);
-        const altMatch = page.data.match(/_csrf"\s+value="([^"]+)"/);
-        const csrfToken = csrfMatch ? csrfMatch[1] : altMatch ? altMatch[1] : null;
-        if (!csrfToken) {
-            return { success: false, error: "Could not extract CSRF token" };
+        // Normalize path: strip any accidental /course prefix (if navigation API returned it)
+        const normalizedPath = assignmentPath.startsWith('/course/')
+            ? assignmentPath.slice('/course'.length)
+            : assignmentPath;
+        console.log(`[THEMIS] submitFiles: assignmentPath="${assignmentPath}", normalized="${normalizedPath}"`);
+        // The CSRF token is baked into the form action URL as a query parameter:
+        // action="/submit/PATH?_csrf=TOKEN&sudo=STUDENTID"
+        // Extract that exact URL from the assignment page.
+        const page = await this.get(`/course${normalizedPath}`);
+        // Normalize to string — axios may return a Buffer when Content-Encoding: gzip
+        const pageStr: string = typeof page.data === 'string' ? page.data : page.data.toString('utf8');
+        console.log(`[THEMIS] submitFiles: GET /course${normalizedPath} → status=${page.status}, dataType=${typeof page.data}, length=${pageStr.length}, hasForm=${pageStr.includes('action="/submit/')}, isLoggedIn=${pageStr.includes('/log/out')}`);
+        const root = parse(pageStr);
+        const submitForm = root.querySelector("form[action*='/submit/']");
+        if (!submitForm) {
+            // Give a more specific error based on page content
+            if (page.status >= 300 || !pageStr.includes('ass-config')) {
+                return { success: false, error: "Not logged in or the assignment page could not be loaded. Please log in again via the Themis sidebar." };
+            }
+            return { success: false, error: "The assignment is not open for submissions (no submit form found). Check the submission deadline on Themis." };
         }
-
-        const form = new FormData();
-        form.append("_csrf", csrfToken);
-
+        const formAction = submitForm.getAttribute("action") || "";
+        // Detect language from form metadata (data-suffixes maps extension→lang, data-languages is default lang)
+        const defaultLang = submitForm.getAttribute("data-languages") || "";
+        const suffixesRaw = submitForm.getAttribute("data-suffixes") || "{}";
+        let suffixMap: Record<string, string> = {};
+        try { suffixMap = JSON.parse(suffixesRaw); } catch { /* ignore */ }
+        // Determine judge language from submitted file extensions
+        let judgeLanguage = defaultLang || "none";
         for (const fp of filePaths) {
-            form.append("files", fs.createReadStream(fp));
+            const ext = fp.slice(fp.lastIndexOf(".") + 1).toLowerCase();
+            if (suffixMap[ext]) { judgeLanguage = suffixMap[ext]; break; }
         }
-
+        const form = new FormData();
+        for (const fp of filePaths) {
+            form.append("files[]", fs.createReadStream(fp));
+        }
+        // These fields are required for Themis to start the judge
+        form.append("judgenow", "true");
+        form.append("judgeLanguage", judgeLanguage);
         try {
-            const url = `${BASE_URL}/submit${assignmentPath}`;
+            const url = `${BASE_URL}${formAction}`;
             const resp = await axios.post(url, form, {
                 headers: {
                     Cookie: this.getCookieStringForUrl(url),
@@ -773,88 +787,250 @@ class ThemisClient {
                 validateStatus: () => true,
             });
             this.storeCookiesFromUrl(url, resp);
-
             if (resp.status === 302 || resp.status === 301) {
                 const location = resp.headers["location"] || "";
                 return { success: true, resultsPath: location };
             }
-
             // Check for error in response body
             if (resp.status >= 400) {
-                const root = parse(resp.data);
-                const errorEl = root.querySelector(".error, .alert-danger, .alert");
+                const pageRoot = parse(resp.data);
+                const errorEl = pageRoot.querySelector(".error, .alert-danger, .alert");
                 const errorMsg = errorEl ? errorEl.text.trim() : `Submission failed (HTTP ${resp.status})`;
                 return { success: false, error: errorMsg };
             }
-
             // 200 with redirect in body means success — try to find results link
             if (typeof resp.data === "string") {
                 const locMatch = resp.data.match(/href="(\/stats[^"]+)"/);
                 if (locMatch) {
                     return { success: true, resultsPath: locMatch[1] };
                 }
-                // Check if it's a success page
-                const user = this.checkLoggedInPage(resp.data);
-                if (user) {
-                    return { success: true, resultsPath: `/stats${assignmentPath}/@latest` };
-                }
             }
-
             return { success: true, resultsPath: `/stats${assignmentPath}/@latest` };
         } catch (err: any) {
             return { success: false, error: err.message || "Submission failed" };
         }
     }
-
-    // ─── Results ───
-
+    
+    public async getSubmissionHistory(assignmentPath: string): Promise<SubmissionSummary[]> {
+        const resp = await this.get(`/stats${assignmentPath}`);
+        const root = parse(resp.data);
+        const submissions: SubmissionSummary[] = [];
+        const THEMIS_STATUSES = [
+            "passed", "failed", "error", "pending", "queued", "none",
+            "compilerr", "runtimerr", "timeout", "outlimit", "diff", "deadline",
+        ];
+        // Helper to extract Themis status from element's class attribute
+        const extractStatus = (el: any): string => {
+            const classAttr = el?.getAttribute?.("class") || "";
+            const classes = classAttr.split(/\s+/);
+            for (const cls of classes) {
+                if (THEMIS_STATUSES.includes(cls)) { return cls; }
+            }
+            return "unknown";
+        };
+        // Each submission on the stats page is a <section class="submission border {status}">
+        const sections = root.querySelectorAll("section.submission");
+        for (const section of sections) {
+            // Status from CSS classes
+            const status = extractStatus(section);
+            // Link: <a href="/submission{path}"> inside header
+            const link = section.querySelector("a[href*='/submission']");
+            const href = link?.getAttribute("href") || "";
+            const title = link ? link.text.trim() : "";
+            // Score/percentage from <text class="percentage">
+            const pctEl = section.querySelector("text.percentage");
+            const score = pctEl ? pctEl.text.trim() : undefined;
+            // Date from Details cfg-container: "Submitted on" config line
+            let date = title;
+            const cfgLines = section.querySelectorAll(".cfg-line");
+            for (const cfg of cfgLines) {
+                const key = cfg.querySelector(".cfg-key");
+                const val = cfg.querySelector(".cfg-val");
+                if (key && val && key.text.trim().includes("Submitted")) {
+                    date = val.text.trim();
+                    break;
+                }
+            }
+            if (href) {
+                submissions.push({ path: href, date, status, score });
+            }
+        }
+        return submissions;
+    }
+    
+    public async fetchRawFile(urlOrPath: string): Promise<string> {
+        const rawUrl = new URL(urlOrPath, BASE_URL);
+        if (rawUrl.pathname.startsWith('/file/') && rawUrl.searchParams.get('raw') !== 'true') {
+            rawUrl.searchParams.set('raw', 'true');
+        }
+        const url = rawUrl.toString();
+        const resp = await axios.get(url, {
+            headers: { Cookie: this.getCookieStringForUrl(url) },
+            responseType: 'text',
+            validateStatus: () => true,
+        });
+        this.storeCookiesFromUrl(url, resp);
+        if (resp.status !== 200) {
+            throw new Error(`Failed to fetch ${url}: HTTP ${resp.status}`);
+        }
+        return typeof resp.data === 'string' ? resp.data : resp.data.toString('utf8');
+    }
+    
+    public async downloadTestInputs(assignmentPath: string): Promise<{ name: string; content: string }[]> {
+        const normalizedPath = assignmentPath.startsWith('/course/')
+            ? assignmentPath.slice('/course'.length)
+            : assignmentPath;
+        const resp = await this.get(`/course${normalizedPath}`);
+        const pageStr = typeof resp.data === 'string' ? resp.data : resp.data.toString('utf8');
+        const root = parse(pageStr);
+        const results: { name: string; content: string }[] = [];
+        // Find the "Test cases" subsection (same structure as getAssignment)
+        const subsections = root.querySelectorAll(".subsec.round.shade");
+        let tcLinks: string[] = [];
+        for (const sub of subsections) {
+            const header = sub.querySelector("h4.info");
+            if (!header || !header.text.includes("Test")) { continue; }
+            for (const link of sub.querySelectorAll(".cfg-line a")) {
+                const href = link.getAttribute("href");
+                if (href) { tcLinks.push(href); }
+            }
+            break;
+        }
+        for (const href of tcLinks) {
+            const name = href.split("/").pop()?.split("?")[0] || "file";
+            try {
+                const content = await this.fetchRawFile(href);
+                results.push({ name, content });
+            } catch { /* skip failed downloads */ }
+        }
+        return results;
+    }
+    
     public async getResults(path: string): Promise<SubmissionResult> {
-        // path is the full stats path, e.g. /stats/2025-2026/os/lab6/1_raid0/@latest
+        // path may be /stats/... or /submission/.../@ submissions/...
         const resp = await this.get(path);
         const html: string = resp.data;
         return this.parseResults(html);
     }
-
     public parseResults(html: string): SubmissionResult {
         const root = parse(html);
-
-        const testCases: TestCaseResult[] = [];
-        const rows = root.querySelectorAll("tr.cell-result, tr[class*='result'], .test-result");
+        // All Themis statuses as defined by the judge server
+        const THEMIS_STATUSES: ThemisStatus[] = [
+            "passed", "failed", "error", "pending", "queued", "none",
+            "compilerr", "runtimerr", "timeout", "outlimit", "diff", "deadline",
+        ];
+        // Helper to extract Themis status from element's class attribute
+        const extractStatus = (el: any): ThemisStatus => {
+            const classAttr = el?.getAttribute?.("class") || "";
+            const classes = classAttr.split(/\s+/);
+            for (const cls of classes) {
+                if (THEMIS_STATUSES.includes(cls as ThemisStatus)) {
+                    return cls as ThemisStatus;
+                }
+            }
+            return "pending";
+        };
+                const section = root.querySelector("section.submission");
+        let overallStatus: ThemisStatus = "pending";
+        if (section) {
+            overallStatus = extractStatus(section);
+        }
+                let percentage: number | undefined;
+        const pctEl = root.querySelector("text.percentage");
+        if (pctEl) {
+            const pctMatch = pctEl.text.trim().match(/(\d+(?:\.\d+)?)/);
+            if (pctMatch) { percentage = parseFloat(pctMatch[1]); }
+        }
+                const testCases: TestCaseResult[] = [];
+        const rows = root.querySelectorAll("tr.sub-casetop");
         for (const row of rows) {
-            const statusEl = row.querySelector(".status, td:first-child");
-            const nameEl = row.querySelector(".test-name, td:nth-child(2)");
-            const detailEl = row.querySelector(".output, td:nth-child(3)");
-
-            const statusText = (statusEl ? statusEl.text.trim() : "").toLowerCase();
-            let status: TestCaseResult["status"] = "pending";
-            if (statusText.includes("pass") || statusText.includes("accept")) { status = "passed"; }
-            else if (statusText.includes("fail") || statusText.includes("wrong") || statusText.includes("reject")) { status = "failed"; }
-            else if (statusText.includes("error") || statusText.includes("crash")) { status = "error"; }
-            else if (statusText.includes("run")) { status = "running"; }
-
-            testCases.push({
-                name: nameEl ? nameEl.text.trim() : "Test",
-                status,
-                details: detailEl ? detailEl.text.trim() : undefined,
-            });
+            // Test name: <td class="sub-casename"><strong>name</strong></td>
+            const nameEl = row.querySelector("td.sub-casename strong");
+            const name = nameEl ? nameEl.text.trim() : "Test";
+            // Status: <td class="status-icon {status}"> — extract status from class
+            const statusTd = row.querySelector("td.status-icon");
+            let status: ThemisStatus = "pending";
+            if (statusTd) {
+                status = extractStatus(statusTd);
+            }
+            // Message & grade from td.status-icon text content: "Status Name: message | grade"
+            let message: string | undefined;
+            let grade: string | undefined;
+            if (statusTd) {
+                const text = statusTd.text.trim();
+                // Format: "Status Name: message | grade" or "Status Name | grade"
+                const pipeIdx = text.lastIndexOf("|");
+                if (pipeIdx >= 0) {
+                    grade = text.slice(pipeIdx + 1).trim() || undefined;
+                }
+                const mainText = pipeIdx >= 0 ? text.slice(0, pipeIdx).trim() : text;
+                const colonIdx = mainText.indexOf(":");
+                if (colonIdx >= 0) {
+                    message = mainText.slice(colonIdx + 1).trim() || undefined;
+                }
+            }
+            // Hint: in the next <tr>, look for <span id="show-hint-text-{name}" hidden>
+            let hint: string | undefined;
+            const hintSpans = root.querySelectorAll(`span[id^="show-hint-text-"]`);
+            for (const span of hintSpans) {
+                if (span.getAttribute("id") === `show-hint-text-${name}`) {
+                    const strong = span.querySelector("strong");
+                    hint = strong ? strong.text.trim() : span.text.replace(/^Hint:\s*/i, "").trim();
+                    if (!hint) { hint = undefined; }
+                    break;
+                }
+            }
+            testCases.push({ name, status, message, grade, hint });
         }
-
-        // Determine overall status
-        let overallStatus: SubmissionResult["status"] = "done";
-        const statusIndicator = root.querySelector(".submission-status, .status-indicator, .judge-status");
-        if (statusIndicator) {
-            const text = statusIndicator.text.trim().toLowerCase();
-            if (text.includes("error")) { overallStatus = "error"; }
-            else if (text.includes("compil")) { overallStatus = "compiling"; }
-            else if (text.includes("run")) { overallStatus = "running"; }
-            else if (text.includes("judg")) { overallStatus = "judging"; }
+                const messagesEl = root.querySelector("ul.sub-messages");
+        let summary: string | undefined;
+        if (messagesEl) {
+            summary = messagesEl.text.trim() || undefined;
         }
-
-        const summaryEl = root.querySelector(".submission-summary, .verdict");
-        const summary = summaryEl ? summaryEl.text.trim() : undefined;
-
-        return { status: overallStatus, testCases, summary };
+        if (!summary && percentage !== undefined) {
+            summary = `${percentage}%`;
+        }
+        return { status: overallStatus, testCases, summary, percentage };
+    }
+    
+    private socket: Socket | null = null;
+    private watchedPath: string | null = null;
+    public watchResults(path: string, onUpdate: (result: SubmissionResult) => void): void {
+        this.unwatchResults();
+        const cookies = this.getCookieStringForUrl(BASE_URL);
+        this.socket = io(`${BASE_URL}/submission`, {
+            transports: ["websocket", "polling"],
+            extraHeaders: { Cookie: cookies },
+            withCredentials: true,
+        });
+        this.watchedPath = path;
+        this.socket.on("connect", () => {
+            console.log("[THEMIS] socket.io connected, watching", path);
+            this.socket!.emit("watch", { path, op: "replace", open: true });
+        });
+        this.socket.on("submission", (data: any) => {
+            console.log("[THEMIS] socket.io submission event received");
+            if (data && data.html) {
+                const result = this.parseResults(data.html);
+                onUpdate(result);
+            }
+        });
+        this.socket.on("disconnect", () => {
+            console.log("[THEMIS] socket.io disconnected");
+        });
+        this.socket.on("connect_error", (err: any) => {
+            console.error("[THEMIS] socket.io connect_error:", err.message);
+        });
+    }
+    public unwatchResults(): void {
+        if (this.socket) {
+            if (this.watchedPath) {
+                this.socket.emit("unwatch", { path: this.watchedPath });
+            }
+            this.socket.disconnect();
+            this.socket = null;
+            this.watchedPath = null;
+        }
     }
 }
-
 export default ThemisClient;

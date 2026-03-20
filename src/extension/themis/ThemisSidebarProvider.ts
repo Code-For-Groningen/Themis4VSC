@@ -4,8 +4,14 @@ import { Uri, WebviewView, WebviewViewProvider } from "vscode";
 import { handleAssignmentRequest } from './handlers/AssignmentListeners';
 import { handleNavigationRequest } from './handlers/CoursesListeners';
 import { handleAttemptLogin, handleCheckLogin, handleLogout } from './handlers/LoginListeners';
-import { handleResultsRequest } from './handlers/ResultsListeners';
-import { handlePickFiles, handleSubmit } from './handlers/SubmissionListeners';
+import { handleResultsRequest, handleWatchResults } from './handlers/ResultsListeners';
+import { handlePickFiles, handleSubmit, handleGetActiveFile } from './handlers/SubmissionListeners';
+import { handlePinItem, handleGetPinnedItems } from './handlers/PinsListeners';
+import { handleGetHistory } from './handlers/HistoryListeners';
+import { handleShowDiff } from './handlers/DiffListeners';
+import { handleDownloadInputs } from './handlers/DownloadListeners';
+import { handlePasteTerminal } from './handlers/TerminalListeners';
+import { handleShowTestCaseIO } from './handlers/TestCaseListeners';
 import ThemisClient from "./ThemisClient";
 
 class ThemisSidebarProvider implements WebviewViewProvider {
@@ -13,6 +19,7 @@ class ThemisSidebarProvider implements WebviewViewProvider {
     _extensionUri: Uri;
     _context: vscode.ExtensionContext;
     _client: ThemisClient;
+    private _listenersRegistered = false;
 
     constructor(context: vscode.ExtensionContext, client: ThemisClient) {
         this._context = context;
@@ -28,20 +35,22 @@ class ThemisSidebarProvider implements WebviewViewProvider {
             localResourceRoots: [this._extensionUri]
         };
 
-        let diskPath = vscode.Uri.joinPath(this._extensionUri, 'src', 'public', 'index.html')
-            .with({ scheme: 'vscode-resource' });
-        let html = fs.readFileSync(diskPath.fsPath, 'utf-8');
+        const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'dist', 'public', 'index.html');
+        let html = fs.readFileSync(htmlPath.fsPath, 'utf-8');
 
         let reactScript = vscode.Uri.file(vscode.Uri.joinPath(this._extensionUri, 'dist', 'react.js').fsPath);
         let reactUrl = webviewView.webview.asWebviewUri(reactScript);
 
-        let cssFile = vscode.Uri.file(vscode.Uri.joinPath(this._extensionUri, 'src', 'public', 'sidebar.css').fsPath);
+        let cssFile = vscode.Uri.file(vscode.Uri.joinPath(this._extensionUri, 'dist', 'public', 'sidebar.css').fsPath);
         let cssUrl = webviewView.webview.asWebviewUri(cssFile);
 
         html = html.replace("%react%", String(reactUrl));
         html = html.replace("%css%", String(cssUrl));
 
-        this.registerListeners();
+        if (!this._listenersRegistered) {
+            this.registerListeners();
+            this._listenersRegistered = true;
+        }
 
         webviewView.webview.html = html;
     }
@@ -64,10 +73,35 @@ class ThemisSidebarProvider implements WebviewViewProvider {
 
         // Submission
         handlePickFiles(ctx, client, webview);
+        handleGetActiveFile(ctx, webview);
         handleSubmit(ctx, client, webview);
 
         // Results
         handleResultsRequest(ctx, client, webview);
+        handleWatchResults(ctx, client, webview);
+
+        // Pins
+        handlePinItem(ctx, webview);
+        handleGetPinnedItems(ctx, webview);
+
+        // Submission history
+        handleGetHistory(ctx, client, webview);
+
+        // Diff viewer
+        handleShowDiff(ctx, webview);
+
+        // Download inputs
+        handleDownloadInputs(ctx, client, webview);
+
+        // Paste to terminal
+        handlePasteTerminal(ctx, webview);
+
+        // Test case viewer
+        handleShowTestCaseIO(ctx, client, webview);
+    }
+
+    public postMessage(message: any) {
+        this._view?.webview.postMessage(message);
     }
 }
 

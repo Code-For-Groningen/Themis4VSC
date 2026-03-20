@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { FileInfo, Message, PickFilesRequest, PickFilesResponse, SubmitRequest, SubmitResponse } from "../../../protocol/protocol";
+import { FileInfo, GetActiveFileRequest, GetActiveFileResponse, Message, PickFilesRequest, PickFilesResponse, SubmitRequest, SubmitResponse } from "../../../protocol/protocol";
 import ThemisClient from "../ThemisClient";
 
 export function handlePickFiles(context: vscode.ExtensionContext, client: ThemisClient, webview: vscode.Webview) {
@@ -23,6 +23,30 @@ export function handlePickFiles(context: vscode.ExtensionContext, client: Themis
             type: "pick-files-response",
             id: req.id,
             files,
+        };
+        webview.postMessage(resp);
+    }, undefined, context.subscriptions);
+}
+
+export function handleGetActiveFile(context: vscode.ExtensionContext, webview: vscode.Webview) {
+    webview.onDidReceiveMessage(async (message: Message) => {
+        if (message.type !== "get-active-file-request") { return; }
+        const req = message as GetActiveFileRequest;
+
+        const editor = vscode.window.activeTextEditor;
+        let file: FileInfo | null = null;
+        if (editor && editor.document.uri.scheme === "file") {
+            const uri = editor.document.uri;
+            file = {
+                name: uri.path.split("/").pop() || uri.fsPath,
+                path: uri.fsPath,
+            };
+        }
+
+        const resp: GetActiveFileResponse = {
+            type: "get-active-file-response",
+            id: req.id,
+            file,
         };
         webview.postMessage(resp);
     }, undefined, context.subscriptions);

@@ -2,17 +2,18 @@
   "name": "themis4vsc",
   "displayName": "Themis4VSC",
   "description": "Full Themis integration for VSCode",
-  "version": "0.0.1",
-  "publisher": "themis4vsc",
+  "version": "0.0.2",
+  "publisher": "masecla22",
   "engines": {
     "vscode": "^1.110.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "*"
-  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Code-For-Groningen/Themis4VSC"
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -35,7 +36,7 @@
           "type": "webview",
           "id": "themis-sidebar",
           "name": "Sidebar View",
-          "icon": "media/icon.svg",
+          "icon": "media/icon.png",
           "contextualTitle": "Themis Integration"
         }
       ]
@@ -45,7 +46,7 @@
         {
           "id": "themis-sidebar",
           "title": "Themis",
-          "icon": "media/icon.svg"
+          "icon": "media/icon.png"
         }
       ]
     }

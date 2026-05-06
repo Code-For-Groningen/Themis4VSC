@@ -5,6 +5,8 @@ import {
     CheckLoginRequest,
     CheckLoginResponse,
     CourseNode,
+    DownloadFileRequest,
+    DownloadFileResponse,
     DownloadInputsRequest,
     DownloadInputsResponse,
     FileInfo,
@@ -199,6 +201,33 @@ function useThemisClient() {
 
         showDiff(testCaseName: string, expected: string, actual: string): void {
             vsApi.postMessage({ type: "show-diff-request", testCaseName, expected, actual });
+        },
+
+        showResultDiff(testCaseName: string, expectedUrl: string, actualUrl: string): void {
+            vsApi.postMessage({
+                type: "show-result-diff-request",
+                testCaseName,
+                expectedUrl,
+                actualUrl,
+            });
+        },
+
+        viewFile(url: string, suggestedName: string): void {
+            vsApi.postMessage({
+                type: "view-themis-file-request",
+                url,
+                suggestedName,
+            });
+        },
+
+        async downloadFile(url: string, suggestedName: string): Promise<{ success: boolean; savedPath?: string; error?: string }> {
+            const id = makeId();
+            const resp = await request<DownloadFileRequest, DownloadFileResponse>(
+                { type: "download-file-request", id, url, suggestedName },
+                "download-file-response",
+                id,
+            );
+            return { success: resp.success, savedPath: resp.savedPath, error: resp.error };
         },
 
         async downloadInputs(assignmentPath: string): Promise<{ success: boolean; count: number; error?: string }> {

@@ -9,7 +9,10 @@ import { handlePickFiles, handleSubmit, handleGetActiveFile } from './handlers/S
 import { handlePinItem, handleGetPinnedItems } from './handlers/PinsListeners';
 import { handleGetHistory } from './handlers/HistoryListeners';
 import { handleShowDiff } from './handlers/DiffListeners';
+import { handleShowResultDiff } from './handlers/ResultDiffListeners';
 import { handleDownloadInputs } from './handlers/DownloadListeners';
+import { handleDownloadFile } from './handlers/DownloadFileListeners';
+import { handleViewThemisFile } from './handlers/ViewFileListeners';
 import { handlePasteTerminal } from './handlers/TerminalListeners';
 import { handleShowTestCaseIO } from './handlers/TestCaseListeners';
 import ThemisClient from "./ThemisClient";
@@ -89,9 +92,12 @@ class ThemisSidebarProvider implements WebviewViewProvider {
 
         // Diff viewer
         handleShowDiff(ctx, webview);
+        handleShowResultDiff(ctx, client, webview);
 
         // Download inputs
         handleDownloadInputs(ctx, client, webview);
+        handleDownloadFile(ctx, client, webview);
+        handleViewThemisFile(ctx, client, webview);
 
         // Paste to terminal
         handlePasteTerminal(ctx, webview);

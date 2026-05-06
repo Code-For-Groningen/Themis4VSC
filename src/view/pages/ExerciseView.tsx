@@ -169,14 +169,19 @@ function ExerciseView(props: {
         setSubmitting(true);
         setError(undefined);
 
-        const result = await client.submit(node.path, files);
+        try {
+            const result = await client.submit(node.path, files);
 
-        if (result.success && result.resultsPath) {
-            onResults(result.resultsPath);
-        } else if (result.success) {
-            onResults(`/stats${node.path}/@latest`);
-        } else {
-            setError(result.error || "Submission failed");
+            if (result.success && result.resultsPath) {
+                onResults(result.resultsPath);
+            } else if (result.success) {
+                onResults(`/stats${node.path}/@latest`);
+            } else {
+                setError(result.error || "Submission failed");
+            }
+        } catch (e: any) {
+            setError(e?.message || "Submission failed");
+        } finally {
             setSubmitting(false);
         }
     };
@@ -228,6 +233,28 @@ function ExerciseView(props: {
                                                         <Terminal size={11} />
                                                     </button>
                                                 </div>
+                                            </div>
+                                        );
+                                    }
+                                    if (opt.files && opt.files.length > 0) {
+                                        return (
+                                            <div key={oi} className="config-option" style={{ alignItems: "flex-start" }}>
+                                                <span className="config-option-name" title={opt.description || opt.name}>{opt.name}</span>
+                                                <span className="config-option-value-wrap">
+                                                    <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "flex-end" }}>
+                                                        {opt.files.map((f, fi) => (
+                                                            <button
+                                                                key={fi}
+                                                                className="btn-link"
+                                                                title={`Download ${f.name}`}
+                                                                onClick={() => client.downloadFile(f.url, f.name)}
+                                                                style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                                                            >
+                                                                <Download size={11} /> {f.name}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </span>
                                             </div>
                                         );
                                     }

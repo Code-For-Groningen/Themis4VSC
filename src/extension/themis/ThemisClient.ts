@@ -211,7 +211,9 @@ class ThemisClient {
     
     public checkLoggedInPage(html: string): LoggedInUserInformation | null {
         // Themis renders: <a href="/user" class="iconize user">Name (s1234567)</a>
-        const match = /<a href="\/user"[^>]*>([^<(]+)\(([sp][0-9]{7})\)<\/a>/i.exec(html);
+        // Themis renders: <a href="/user" class="iconize user">Name (s1234567)</a>
+        // Student numbers (s) are 7 digits; staff/personnel (p) numbers may be 6 digits.
+        const match = /<a href="\/user"[^>]*>([^<(]+)\(([sp][0-9]{3,9})\)<\/a>/i.exec(html);
         if (!match) {
             console.debug("[THEMIS] checkLoggedInPage: No logged-in pattern found in HTML");
             return null;
@@ -656,6 +658,7 @@ class ThemisClient {
                         const keyLabel = keyTip?.text.trim()
                             || key.text.trim().split(/\s{2,}|\n/)[0].trim();
                         let value = val ? val.text.trim() : "";
+                        let files: { name: string; url: string }[] | undefined;
                         if (val) {
                             // Dates are in .tip[data-title] with ISO string, or <time datetime>
                             const tipDate = val.querySelector(".tip[data-title]");
@@ -666,11 +669,23 @@ class ThemisClient {
                                 const timeEl = val.querySelector("time[datetime]");
                                 if (timeEl) { value = timeEl.getAttribute("datetime") || value; }
                             }
+                            // File links (Downloads / Reference / Insertable / Overridable rows
+                            // render as <a href="/file..." data-path="name">name</a>, possibly
+                            // wrapped in a <details><summary>...</summary> when above a threshold).
+                            const fileLinks = val.querySelectorAll('a[href^="/file"]');
+                            if (fileLinks.length > 0) {
+                                files = fileLinks.map(a => ({
+                                    name: a.getAttribute("data-path")?.trim() || a.text.trim(),
+                                    url: a.getAttribute("href") || "",
+                                })).filter(f => f.url);
+                                if (files.length === 0) { files = undefined; }
+                            }
                         }
                         currentGroup.options.push({
                             name: keyLabel.replace(/:$/, ""),
                             value,
                             description: keyDescription,
+                            files,
                         });
                     }
                 }
@@ -930,7 +945,10 @@ class ThemisClient {
             }
             return "pending";
         };
-                const section = root.querySelector("section.submission");
+        // Trust Themis: the rendered submission's <section class="submission border {{status}}">
+        // is the source of truth for the overall status. No fallbacks, no aggregation across
+        // test cases — those would race ahead of the server's own state machine.
+        const section = root.querySelector("section.submission");
         let overallStatus: ThemisStatus = "pending";
         if (section) {
             overallStatus = extractStatus(section);
@@ -947,6 +965,29 @@ class ThemisClient {
             // Test name: <td class="sub-casename"><strong>name</strong></td>
             const nameEl = row.querySelector("td.sub-casename strong");
             const name = nameEl ? nameEl.text.trim() : "Test";
+            // Each test case spans 4 sibling rows (sub-casetop + 3 follow-ups).
+            // Walk forward in the parent's children to scoop up the case-* file links.
+            let inputUrl: string | undefined;
+            let expectedUrl: string | undefined;
+            let actualUrl: string | undefined;
+            let errorUrl: string | undefined;
+            let diffUrl: string | undefined;
+            const parent = (row as any).parentNode;
+            if (parent && Array.isArray(parent.childNodes)) {
+                const siblings = parent.childNodes.filter((n: any) => n.tagName === "TR");
+                const idx = siblings.indexOf(row);
+                if (idx >= 0) {
+                    const block = siblings.slice(idx, idx + 4);
+                    const pickHref = (el: any) => el?.getAttribute?.("href") || undefined;
+                    for (const tr of block) {
+                        if (!inputUrl)    { inputUrl    = pickHref(tr.querySelector("a.case-stdin")); }
+                        if (!expectedUrl) { expectedUrl = pickHref(tr.querySelector("a.case-refout")); }
+                        if (!actualUrl)   { actualUrl   = pickHref(tr.querySelector("a.case-stdout")); }
+                        if (!errorUrl)    { errorUrl    = pickHref(tr.querySelector("a.case-stderr")); }
+                        if (!diffUrl)     { diffUrl     = pickHref(tr.querySelector("a.case-diff")); }
+                    }
+                }
+            }
             // Status: <td class="status-icon {status}"> — extract status from class
             const statusTd = row.querySelector("td.status-icon");
             let status: ThemisStatus = "pending";
@@ -980,7 +1021,7 @@ class ThemisClient {
                     break;
                 }
             }
-            testCases.push({ name, status, message, grade, hint });
+            testCases.push({ name, status, message, grade, hint, inputUrl, expectedUrl, actualUrl, errorUrl, diffUrl });
         }
                 const messagesEl = root.querySelector("ul.sub-messages");
         let summary: string | undefined;
@@ -997,16 +1038,23 @@ class ThemisClient {
     private watchedPath: string | null = null;
     public watchResults(path: string, onUpdate: (result: SubmissionResult) => void): void {
         this.unwatchResults();
+        // Themis' socket server runs Path(data.path) and joins rooms based on the canonical
+        // assignment-relative path. Route prefixes like "/submission" or "/stats" must be
+        // stripped, otherwise they'd be parsed as part of the assignment and we'd join the
+        // wrong room (and never receive judging updates).
+        const watchPath = path
+            .replace(/^\/submission(?=\/)/, "")
+            .replace(/^\/stats(?=\/)/, "");
         const cookies = this.getCookieStringForUrl(BASE_URL);
         this.socket = io(`${BASE_URL}/submission`, {
             transports: ["websocket", "polling"],
             extraHeaders: { Cookie: cookies },
             withCredentials: true,
         });
-        this.watchedPath = path;
+        this.watchedPath = watchPath;
         this.socket.on("connect", () => {
-            console.log("[THEMIS] socket.io connected, watching", path);
-            this.socket!.emit("watch", { path, op: "replace", open: true });
+            console.log("[THEMIS] socket.io connected, watching", watchPath);
+            this.socket!.emit("watch", { path: watchPath, op: "replace", open: "true" });
         });
         this.socket.on("submission", (data: any) => {
             console.log("[THEMIS] socket.io submission event received");

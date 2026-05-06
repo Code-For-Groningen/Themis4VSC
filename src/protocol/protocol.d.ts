@@ -68,10 +68,20 @@ export interface NavigationResponse extends Message, Identifiable {
 }
 
 
+export interface AssignmentOptionFile {
+    name: string;
+    url: string;
+}
+
 export interface AssignmentOption {
     name: string;
     value: string;
     description?: string;
+    /**
+     * File links extracted from the cfg-val (e.g. for "Downloads", "Reference",
+     * "Insertable", "Overridable" — Themis renders these as <a href="/file..."> lists).
+     */
+    files?: AssignmentOptionFile[];
 }
 
 export interface AssignmentOptionGroup {
@@ -146,6 +156,16 @@ export interface TestCaseResult {
     message?: string;
     grade?: string;
     hint?: string;
+    /** Themis /file URL for the reference (expected) output. */
+    expectedUrl?: string;
+    /** Themis /file URL for the submission's actual stdout. */
+    actualUrl?: string;
+    /** Themis /file URL for the submission's stderr. */
+    errorUrl?: string;
+    /** Themis /file URL for the precomputed diff (expected vs actual). */
+    diffUrl?: string;
+    /** Themis /file URL for the test input (stdin). */
+    inputUrl?: string;
 }
 
 export interface SubmissionResult {
@@ -266,6 +286,45 @@ export interface ShowDiffRequest extends Message {
     testCaseName: string;
     expected: string;
     actual: string;
+}
+
+
+/**
+ * Open a diff editor in VS Code by fetching the expected and actual outputs
+ * from Themis (raw /file URLs) on the extension host.
+ */
+export interface ShowResultDiffRequest extends Message {
+    type: "show-result-diff-request";
+    testCaseName: string;
+    expectedUrl: string;
+    actualUrl: string;
+}
+
+
+/**
+ * Open a single Themis file in a new VS Code editor tab (read-only preview).
+ */
+export interface ViewThemisFileRequest extends Message {
+    type: "view-themis-file-request";
+    url: string;
+    suggestedName: string;
+}
+
+
+/**
+ * Save a single file from Themis to disk via a Save dialog.
+ */
+export interface DownloadFileRequest extends Message, Identifiable {
+    type: "download-file-request";
+    url: string;
+    suggestedName: string;
+}
+
+export interface DownloadFileResponse extends Message, Identifiable {
+    type: "download-file-response";
+    success: boolean;
+    error?: string;
+    savedPath?: string;
 }
 
 

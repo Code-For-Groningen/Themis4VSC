@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { ExtensionContext, Webview, WebviewPanel } from 'vscode';
 import { Message, ShowTestCaseIORequest } from '../../../protocol/protocol';
@@ -27,15 +28,32 @@ export function handleShowTestCaseIO(context: ExtensionContext, client: ThemisCl
         // Create or reuse webview panel for test case view
         if (panel) {
             panel.reveal(vscode.ViewColumn.Beside);
+            panel.title = `Test Case: ${req.testCaseName}`;
         } else {
             panel = vscode.window.createWebviewPanel(
                 'themisTestCase',
                 `Test Case: ${req.testCaseName}`,
                 vscode.ViewColumn.Beside,
-                { enableScripts: false }
+                { enableScripts: true }
             );
             panel.onDidDispose(() => { panel = undefined; });
         }
+        // Save handler: panel posts { type: 'save', kind, name, content }
+        const savedListener = panel.webview.onDidReceiveMessage(async (msg: any) => {
+            if (!msg || msg.type !== "save") { return; }
+            try {
+                const target = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file(msg.name),
+                    saveLabel: `Save ${msg.kind}`,
+                });
+                if (!target) { return; }
+                fs.writeFileSync(target.fsPath, msg.content, "utf-8");
+                vscode.window.showInformationMessage(`Saved ${msg.kind} → ${target.fsPath}`);
+            } catch (e: any) {
+                vscode.window.showErrorMessage(`Failed to save ${msg.kind}: ${e.message || e}`);
+            }
+        });
+        panel.onDidDispose(() => savedListener.dispose());
 
         // Escape HTML content and generate split pane view
         const escapeHtml = (text: string) => {
@@ -92,6 +110,21 @@ export function handleShowTestCaseIO(context: ExtensionContext, client: ThemisCl
             font-size: 12px;
             font-weight: 600;
             color: var(--vscode-sideBarTitle-foreground, #cccccc);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .save-btn {
+            padding: 3px 8px;
+            border: 1px solid var(--vscode-button-border, transparent);
+            background: var(--vscode-button-background, #0e639c);
+            color: var(--vscode-button-foreground, white);
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .save-btn:hover {
+            background: var(--vscode-button-hoverBackground, #1177bb);
         }
         .pane-content {
             flex: 1;
@@ -126,14 +159,32 @@ export function handleShowTestCaseIO(context: ExtensionContext, client: ThemisCl
     </div>
     <div class="content">
         <div class="pane">
-            <div class="pane-label">Input</div>
-            <div class="pane-content">${escapeHtml(inputContent)}</div>
+            <div class="pane-label">
+                <span>Input</span>
+                <button class="save-btn" id="save-input">Save Input</button>
+            </div>
+            <div class="pane-content" id="input-content">${escapeHtml(inputContent)}</div>
         </div>
         <div class="pane">
-            <div class="pane-label">Expected Output</div>
-            <div class="pane-content">${escapeHtml(outputContent)}</div>
+            <div class="pane-label">
+                <span>Expected Output</span>
+                <button class="save-btn" id="save-output">Save Output</button>
+            </div>
+            <div class="pane-content" id="output-content">${escapeHtml(outputContent)}</div>
         </div>
     </div>
+    <script>
+        const vscode = acquireVsCodeApi();
+        const inputText = ${JSON.stringify(inputContent)};
+        const outputText = ${JSON.stringify(outputContent)};
+        const baseName = ${JSON.stringify(req.testCaseName)};
+        document.getElementById('save-input').addEventListener('click', () => {
+            vscode.postMessage({ type: 'save', kind: 'input', name: baseName + '.in', content: inputText });
+        });
+        document.getElementById('save-output').addEventListener('click', () => {
+            vscode.postMessage({ type: 'save', kind: 'expected output', name: baseName + '.out', content: outputText });
+        });
+    </script>
 </body>
 </html>`;
     });

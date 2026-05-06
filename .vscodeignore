@@ -1,8 +1,13 @@
 .vscode/**
 .vscode-test/**
 src/**
+themis/**
+node_modules/**
+test_axios.js
+*.log.txt
 .gitignore
 .yarnrc
+.npmrc
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/.eslintrc.json
